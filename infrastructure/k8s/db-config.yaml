@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-config
+  namespace: church-mgmt
+data:
+  DB_HOST: "mariadb"
+  DB_PORT: "3306"
+  DB_NAME: "church_mgmt"
