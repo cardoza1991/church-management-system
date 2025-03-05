@@ -33,3 +33,4 @@ go.work
 # Build output
 bin/
 dist/
+minikube-linux-amd64
