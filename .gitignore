@@ -34,3 +34,4 @@ go.work
 bin/
 dist/
 minikube-linux-amd64
+minikube-linux-amd64
