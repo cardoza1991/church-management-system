@@ -1,0 +1,614 @@
+File: ./output.txt
+-e 
+---
+
+File: ./user-service/api/middleware/auth.go
+package middleware
+
+import (
+	"context"
+	"net/http"
+	"strings"
+
+	"github.com/yourusername/church-management-system/services/user-service/internal/auth"
+)
+
+// AuthMiddleware checks for a valid JWT token
+func AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Get token from Authorization header
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Authorization header required", http.StatusUnauthorized)
+			return
+		}
+		
+		// Extract the token
+		tokenParts := strings.Split(authHeader, " ")
+		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+			http.Error(w, "Invalid token format", http.StatusUnauthorized)
+			return
+		}
+		
+		// Verify the token
+		claims, err := auth.VerifyToken(tokenParts[1])
+		if err != nil {
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+		
+		// Add claims to request context
+		ctx := context.WithValue(r.Context(), "user", claims)
+		
+		// Call the next handler
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+-e 
+---
+
+File: ./user-service/api/handlers/auth.go
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/yourusername/church-management-system/services/user-service/internal/auth"
+	"github.com/yourusername/church-management-system/services/user-service/internal/models"
+)
+
+// AuthHandler handles authentication requests
+type AuthHandler struct {
+	UserRepo *models.UserRepository
+}
+
+// RegisterRequest represents a registration request
+type RegisterRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Email    string `json:"email"`
+	FullName string `json:"full_name"`
+	Phone    string `json:"phone,omitempty"`
+	Role     string `json:"role"`
+}
+
+// LoginRequest represents a login request
+type LoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// AuthResponse represents the response after authentication
+type AuthResponse struct {
+	Token string `json:"token"`
+	User  *models.User `json:"user"`
+}
+
+// Register handles user registration
+func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	// Parse request
+	var req RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	
+	// Validate input
+	if req.Username == "" || req.Password == "" || req.Email == "" || req.FullName == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+	
+	// Default role if not provided
+	if req.Role == "" {
+		req.Role = "member"
+	}
+	
+	// Create user
+	user := &models.User{
+		Username: req.Username,
+		Email:    req.Email,
+		Role:     req.Role,
+		FullName: req.FullName,
+		Phone:    req.Phone,
+	}
+	
+	// Save to database
+	if err := h.UserRepo.Create(user, req.Password); err != nil {
+		http.Error(w, "Failed to create user: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Generate token
+	token, err := auth.GenerateToken(user.ID, user.Username, user.Role)
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+	
+	// Return response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(AuthResponse{
+		Token: token,
+		User:  user,
+	})
+}
+
+// Login handles user login
+func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	// Parse request
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	
+	// Validate input
+	if req.Username == "" || req.Password == "" {
+		http.Error(w, "Username and password required", http.StatusBadRequest)
+		return
+	}
+	
+	// Find user
+	user, err := h.UserRepo.GetByUsername(req.Username)
+	if err != nil {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	
+	// Check password
+	if !user.CheckPassword(req.Password) {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	
+	// Generate token
+	token, err := auth.GenerateToken(user.ID, user.Username, user.Role)
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+	
+	// Return response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(AuthResponse{
+		Token: token,
+		User:  user,
+	})
+}
+-e 
+---
+
+File: ./user-service/api/handlers/users.go
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"github.com/gorilla/mux"
+	"github.com/yourusername/church-management-system/services/user-service/internal/models"
+)
+
+// UserHandler handles user-related requests
+type UserHandler struct {
+	UserRepo *models.UserRepository
+}
+
+// GetUser returns a user by ID
+func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
+	// Get ID from URL
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+		return
+	}
+	
+	// Example response for demonstration
+	user := &models.User{
+		ID:       id,
+		Username: "user" + vars["id"],
+		Email:    "user" + vars["id"] + "@example.com",
+		Role:     "member",
+		FullName: "User " + vars["id"],
+	}
+	
+	// Return response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// GetSelf returns the current user
+func (h *UserHandler) GetSelf(w http.ResponseWriter, r *http.Request) {
+	// Get user from context (set by AuthMiddleware)
+	claims, ok := r.Context().Value("user").(*auth.Claims)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	
+	// Find user in database
+	user, err := h.UserRepo.GetByUsername(claims.Username)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	
+	// Return response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+-e 
+---
+
+File: ./user-service/config/config.go
+package config
+
+import (
+	"fmt"
+	"os"
+)
+
+// Config holds all configuration for the service
+type Config struct {
+	DBHost     string
+	DBPort     string
+	DBUser     string
+	DBPassword string
+	DBName     string
+	ServerPort string
+}
+
+// Load returns a new Config struct populated with values from environment variables
+func Load() *Config {
+	return &Config{
+		DBHost:     getEnv("DB_HOST", "localhost"),
+		DBPort:     getEnv("DB_PORT", "3306"),
+		DBUser:     getEnv("DB_USER", "root"),
+		DBPassword: getEnv("DB_PASSWORD", ""),
+		DBName:     getEnv("DB_NAME", "church_mgmt"),
+		ServerPort: getEnv("PORT", "8080"),
+	}
+}
+
+// DSN returns a formatted database connection string
+func (c *Config) DSN() string {
+	return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", 
+		c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
+}
+
+// Helper function to get environment variable with a default value
+func getEnv(key, defaultValue string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return defaultValue
+}
+-e 
+---
+
+File: ./user-service/Dockerfile
+FROM golang:1.19-alpine AS builder
+
+WORKDIR /app
+COPY . .
+RUN go mod download
+RUN CGO_ENABLED=0 GOOS=linux go build -o /user-service
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY --from=builder /user-service .
+EXPOSE 8080
+CMD ["./user-service"]
+-e 
+---
+
+File: ./user-service/internal/models/user.go
+package models
+
+import (
+	"database/sql"
+	"errors"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+// User represents a user in the system
+type User struct {
+	ID           int       `json:"id"`
+	Username     string    `json:"username"`
+	PasswordHash string    `json:"-"`
+	Email        string    `json:"email"`
+	Role         string    `json:"role"`
+	FullName     string    `json:"full_name"`
+	Phone        string    `json:"phone,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// UserRepository provides access to the user store
+type UserRepository struct {
+	DB *sql.DB
+}
+
+// NewUserRepository creates a new UserRepository
+func NewUserRepository(db *sql.DB) *UserRepository {
+	return &UserRepository{DB: db}
+}
+
+// Create adds a new user to the database
+func (r *UserRepository) Create(user *User, password string) error {
+	// Hash the password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	
+	query := `INSERT INTO users (username, password_hash, email, role, full_name, phone)
+		VALUES (?, ?, ?, ?, ?, ?)`
+	
+	result, err := r.DB.Exec(query, user.Username, string(hashedPassword), 
+		user.Email, user.Role, user.FullName, user.Phone)
+	if err != nil {
+		return err
+	}
+	
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	
+	user.ID = int(id)
+	return nil
+}
+
+// GetByUsername finds a user by username
+func (r *UserRepository) GetByUsername(username string) (*User, error) {
+	user := &User{}
+	
+	query := `SELECT id, username, password_hash, email, role, full_name, phone, created_at, updated_at 
+		FROM users WHERE username = ?`
+	
+	err := r.DB.QueryRow(query, username).Scan(
+		&user.ID, &user.Username, &user.PasswordHash, &user.Email, 
+		&user.Role, &user.FullName, &user.Phone, &user.CreatedAt, &user.UpdatedAt,
+	)
+	
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New("user not found")
+		}
+		return nil, err
+	}
+	
+	return user, nil
+}
+
+// CheckPassword verifies a user's password
+func (u *User) CheckPassword(password string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password))
+	return err == nil
+}
+-e 
+---
+
+File: ./user-service/internal/db/db.go
+package db
+
+import (
+	"database/sql"
+	"log"
+	"time"
+
+	_ "github.com/go-sql-driver/mysql"
+)
+
+// Connect establishes a connection to the database
+func Connect(dsn string) (*sql.DB, error) {
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	// Configure connection pool
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	// Test connection
+	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+
+	log.Println("Connected to database successfully")
+	return db, nil
+}
+-e 
+---
+
+File: ./user-service/internal/auth/auth.go
+package auth
+
+import (
+	"errors"
+	"time"
+	"fmt"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"strings"
+)
+
+// Claims represents the JWT claims
+type Claims struct {
+	UserID   int    `json:"user_id"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+	ExpiresAt int64 `json:"exp"`
+}
+
+// For a real app, use a proper JWT library and store the secret securely
+var hmacSecret = []byte("your-secret-key")
+
+// GenerateToken creates a new JWT token for a user
+func GenerateToken(userID int, username, role string) (string, error) {
+	// Set expiration time - 24 hours from now
+	expirationTime := time.Now().Add(24 * time.Hour).Unix()
+	
+	// Create claims
+	claims := Claims{
+		UserID:    userID,
+		Username:  username,
+		Role:      role,
+		ExpiresAt: expirationTime,
+	}
+	
+	// Create token
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	
+	// Base64 encode the header and payload
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload64 := base64.RawURLEncoding.EncodeToString(payload)
+	
+	// Create signature
+	h := hmac.New(sha256.New, hmacSecret)
+	h.Write([]byte(header + "." + payload64))
+	signature := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+	
+	// Combine to create token
+	token := header + "." + payload64 + "." + signature
+	
+	return token, nil
+}
+
+// VerifyToken validates a JWT token
+func VerifyToken(tokenString string) (*Claims, error) {
+	// Split the token
+	parts := strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		return nil, errors.New("invalid token format")
+	}
+	
+	// Get the header and payload
+	header, payload, signature := parts[0], parts[1], parts[2]
+	
+	// Verify signature
+	h := hmac.New(sha256.New, hmacSecret)
+	h.Write([]byte(header + "." + payload))
+	expectedSignature := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+	
+	if signature != expectedSignature {
+		return nil, errors.New("invalid token signature")
+	}
+	
+	// Decode payload
+	decodedPayload, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil {
+		return nil, errors.New("failed to decode payload")
+	}
+	
+	// Parse claims
+	var claims Claims
+	if err := json.Unmarshal(decodedPayload, &claims); err != nil {
+		return nil, errors.New("failed to parse claims")
+	}
+	
+	// Check if token is expired
+	if claims.ExpiresAt < time.Now().Unix() {
+		return nil, errors.New("token is expired")
+	}
+	
+	return &claims, nil
+}
+-e 
+---
+
+File: ./user-service/go.sum
+github.com/go-sql-driver/mysql v1.7.1 h1:lUIinVbN1DY0xBg0eMOzmmtGoHwWBbvnWubQUrtU8EI=
+github.com/go-sql-driver/mysql v1.7.1/go.mod h1:OXbVy3sEdcQ2Doequ6Z5BW6fXNQTmx+9S1MCJN5yJMI=
+-e 
+---
+
+File: ./user-service/go.mod
+module github.com/yourusername/church-management-system/services/user-service
+
+go 1.19
+
+require (
+	github.com/go-sql-driver/mysql v1.7.1
+	github.com/gorilla/mux v1.8.0
+	golang.org/x/crypto v0.13.0
+)
+-e 
+---
+
+File: ./user-service/main.go
+package main
+
+import (
+	"log"
+	"net/http"
+
+	"github.com/gorilla/mux"
+	"github.com/cardoza1991/church-management-system/services/user-service/api/handlers"
+	"github.com/cardoza1991/church-management-system/services/user-service/api/middleware"
+	"github.com/cardoza1991/church-management-system/services/user-service/config"
+	"github.com/cardoza1991/church-management-system/services/user-service/internal/db"
+	"github.com/cardoza1991/church-management-system/services/user-service/internal/models"
+)
+
+func main() {
+	// Load configuration
+	cfg := config.Load()
+	
+	// Connect to database
+	database, err := db.Connect(cfg.DSN())
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer database.Close()
+	
+	// Create repositories
+	userRepo := models.NewUserRepository(database)
+	
+	// Create handlers
+	authHandler := &handlers.AuthHandler{UserRepo: userRepo}
+	userHandler := &handlers.UserHandler{UserRepo: userRepo}
+	
+	// Create router
+	r := mux.NewRouter()
+	
+	// Health check endpoint
+	r.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	}).Methods("GET")
+	
+	// Auth endpoints
+	r.HandleFunc("/register", authHandler.Register).Methods("POST")
+	r.HandleFunc("/login", authHandler.Login).Methods("POST")
+	
+	// Protected user endpoints
+	userRouter := r.PathPrefix("/users").Subrouter()
+	userRouter.Use(middleware.AuthMiddleware)
+	userRouter.HandleFunc("/me", userHandler.GetSelf).Methods("GET")
+	userRouter.HandleFunc("/{id}", userHandler.GetUser).Methods("GET")
+	
+	// Start server
+	log.Printf("Server starting on port %s", cfg.ServerPort)
+	if err := http.ListenAndServe(":"+cfg.ServerPort, r); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
+}
+-e 
+---
+
