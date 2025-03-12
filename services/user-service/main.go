@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"github.com/rs/cors"
 
 	"github.com/gorilla/mux"
 	"github.com/cardoza1991/church-management-system/services/user-service/api/handlers"
@@ -43,15 +44,35 @@ func main() {
 	r.HandleFunc("/register", authHandler.Register).Methods("POST")
 	r.HandleFunc("/login", authHandler.Login).Methods("POST")
 	
+	
 	// Protected user endpoints
 	userRouter := r.PathPrefix("/users").Subrouter()
 	userRouter.Use(middleware.AuthMiddleware)
 	userRouter.HandleFunc("/me", userHandler.GetSelf).Methods("GET")
 	userRouter.HandleFunc("/{id}", userHandler.GetUser).Methods("GET")
 	
+	
 	// Start server
 	log.Printf("Server starting on port %s", cfg.ServerPort)
 	if err := http.ListenAndServe(":"+cfg.ServerPort, r); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
+	
+    // Create a CORS handler
+    c := cors.New(cors.Options{
+        AllowedOrigins:   []string{"http://localhost:3000"}, // Your frontend URL
+        AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+        AllowedHeaders:   []string{"Authorization", "Content-Type"},
+        AllowCredentials: true,
+    })
+    
+    // Wrap the router with the CORS middleware
+    handler := c.Handler(r)
+    
+    // Start server with CORS-enabled handler
+    log.Printf("Service starting on port %s", cfg.ServerPort)
+    if err := http.ListenAndServe(":"+cfg.ServerPort, handler); err != nil {
+        log.Fatalf("Failed to start server: %v", err)
+    }
 }
+

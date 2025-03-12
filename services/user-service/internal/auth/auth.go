@@ -3,7 +3,7 @@ package auth
 import (
 	"errors"
 	"time"
-	"fmt"
+	
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
